@@ -98,8 +98,20 @@ private final class SoundHubViewModel: ObservableObject {
     @Published var apiBaseURLText = UserDefaults.standard.string(forKey: "SoundHubAPIBaseURL") ?? ""
     @Published private(set) var serviceMessage = "Not connected to a SoundHub server."
     @Published private(set) var isLoadingService = false
+    @Published private(set) var isLoadingMoreServiceSongs = false
+    @Published private(set) var loadedServicePages = 0
+    @Published private(set) var serviceSongCount = 0
+    private var serviceSort: SoundHubCatalogSort = .mostBranched
 
     private let persistence = SoundHubLocalPersistence()
+
+    var hasMoreServiceSongs: Bool {
+        serviceSongCount > songs.filter { !createdSongIDs.contains($0.id) && !$0.isSample }.count
+    }
+
+    var loadedServiceSongCount: Int {
+        songs.filter { !createdSongIDs.contains($0.id) && !$0.isSample }.count
+    }
 
     init() {
         if let state = persistence.load() {
@@ -140,7 +152,8 @@ private final class SoundHubViewModel: ObservableObject {
 
     func vote(_ value: Int, for songID: String) {
         let oldValue = votes[songID] ?? 0
-        let nextValue = oldValue == value ? 0 : value
+        // The legacy service keeps the current vote until the user switches direction.
+        let nextValue = value
         votes[songID] = nextValue
         guard let index = songs.firstIndex(where: { $0.id == songID }) else { return }
         var song = songs[index]
@@ -198,29 +211,98 @@ private final class SoundHubViewModel: ObservableObject {
         }
 
         UserDefaults.standard.set(url.absoluteString, forKey: "SoundHubAPIBaseURL")
+        loadRemoteCatalog(sort: serviceSort, from: url)
+    }
+
+    func updateRemoteSort(_ sort: DiscoverySort) {
+        let apiSort: SoundHubCatalogSort
+        switch sort {
+        case .newest: apiSort = .newest
+        case .mostBranches: apiSort = .mostBranched
+        case .mostLiked: apiSort = .mostLiked
+        case .title: apiSort = .title
+        }
+        serviceSort = apiSort
+        guard let value = UserDefaults.standard.string(forKey: "SoundHubAPIBaseURL"),
+              let url = URL(string: value) else { return }
+        loadRemoteCatalog(sort: apiSort, from: url)
+    }
+
+    func loadMoreRemoteSongs() {
+        guard !isLoadingService, !isLoadingMoreServiceSongs,
+              let value = UserDefaults.standard.string(forKey: "SoundHubAPIBaseURL"),
+              let url = URL(string: value),
+              loadedServicePages < (serviceSongCount + SoundHubSongPage.pageSize - 1) / SoundHubSongPage.pageSize else { return }
+        isLoadingMoreServiceSongs = true
+        Task {
+            do {
+                let nextPage = loadedServicePages + 1
+                let response = try await SoundHubAPI(baseURL: url).sortedSongs(sort: serviceSort, page: nextPage)
+                let converted = convertRemoteSongs(response.songs)
+                let knownIDs = Set(songs.map(\.id))
+                songs.append(contentsOf: converted.filter { !knownIDs.contains($0.id) })
+                loadedServicePages = nextPage
+                serviceSongCount = response.number
+                serviceMessage = "Loaded \(min(songs.count, serviceSongCount)) of \(serviceSongCount) server songs."
+                persist()
+            } catch {
+                serviceMessage = "Couldn't load more songs: \(error.localizedDescription)"
+            }
+            isLoadingMoreServiceSongs = false
+        }
+    }
+
+    private func loadRemoteCatalog(sort: SoundHubCatalogSort, from url: URL) {
+        serviceSort = sort
+        loadedServicePages = 0
         isLoadingService = true
         serviceMessage = "Connecting and loading the catalog…"
         Task {
             do {
-                let remoteSongs = try await SoundHubAPI(baseURL: url).allSongs()
+                let response = try await SoundHubAPI(baseURL: url).sortedSongs(sort: sort, page: 1)
                 let localSongs = songs.filter { createdSongIDs.contains($0.id) }
-                let converted = remoteSongs.enumerated().map { index, remote in
-                    Song(id: remote.uuid, title: remote.title,
-                         creator: remote.authorName ?? "SoundHub member",
-                         genre: remote.genre ?? "Uncategorized", branches: remote.forks,
-                         likes: remote.like, color: SampleCatalog.apiColors[index % SampleCatalog.apiColors.count],
-                         parentID: remote.parentId, rootID: remote.rootId,
-                         description: remote.description ?? "",
-                         mediaURL: remote.url.flatMap { URL(string: $0) }, isSample: false)
-                }
+                let converted = convertRemoteSongs(response.songs)
                 let remoteIDs = Set(converted.map(\.id))
                 songs = converted + localSongs.filter { !remoteIDs.contains($0.id) }
+                loadedServicePages = 1
+                serviceSongCount = response.number
                 persist()
-                serviceMessage = "Connected. Loaded \(converted.count) songs. Local-only actions are still stored on this Mac."
+                serviceMessage = "Connected. Loaded \(converted.count) of \(serviceSongCount) server songs. Member actions stay on this Mac."
             } catch {
                 serviceMessage = "Couldn't load the SoundHub catalog: \(error.localizedDescription)"
             }
             isLoadingService = false
+        }
+    }
+
+    private func convertRemoteSongs(_ remoteSongs: [SoundHubSong]) -> [Song] {
+        remoteSongs.enumerated().map { index, remote in
+            Song(id: remote.uuid, title: remote.title,
+                 creator: remote.authorName ?? "SoundHub member",
+                 genre: remote.genre ?? "Uncategorized", branches: remote.forks,
+                 likes: remote.like, color: SampleCatalog.apiColors[index % SampleCatalog.apiColors.count],
+                 parentID: remote.parentId, rootID: remote.rootId,
+                 description: remote.description ?? "",
+                 mediaURL: remote.url.flatMap { URL(string: $0) }, isSample: false)
+        }
+    }
+
+    func loadRemoteTree(rootID: String) {
+        guard let value = UserDefaults.standard.string(forKey: "SoundHubAPIBaseURL"),
+              let url = URL(string: value) else { return }
+        Task {
+            do {
+                let remoteTree = try await SoundHubAPI(baseURL: url).tree(rootID: rootID)
+                let localTreeSongs = songs.filter { createdSongIDs.contains($0.id) && $0.rootID == rootID }
+                let converted = convertRemoteSongs(remoteTree)
+                songs.removeAll { $0.rootID == rootID }
+                songs.append(contentsOf: converted)
+                let remoteIDs = Set(converted.map(\.id))
+                songs.append(contentsOf: localTreeSongs.filter { !remoteIDs.contains($0.id) })
+                persist()
+            } catch {
+                serviceMessage = "Couldn't load this song tree: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -378,6 +460,7 @@ private enum LibrarySection: String, CaseIterable, Identifiable {
     case myMusic = "My Music"
     case branches = "Branches"
     case favorites = "Favorites"
+    case votes = "My Votes"
     var id: String { rawValue }
 }
 
@@ -486,6 +569,7 @@ private struct SoundHubWindow: View {
 
     private func openSongTree(_ song: Song) {
         selectSong(song)
+        model.loadRemoteTree(rootID: song.rootID)
         page = .tree
     }
 
@@ -557,6 +641,7 @@ private struct SoundHubWindow: View {
                 Image(systemName: "magnifyingglass").foregroundStyle(SoundHubPalette.muted)
                 TextField("Search songs, creators, or genres", text: $searchText)
                     .textFieldStyle(.plain).font(.system(size: 12))
+                    .accessibilityLabel("Search songs, creators, or genres")
             }
             .padding(.horizontal, 12).padding(.vertical, 9).frame(maxWidth: 350)
             .background(SoundHubPalette.panel, in: RoundedRectangle(cornerRadius: 9))
@@ -578,9 +663,12 @@ private struct SoundHubWindow: View {
             .font(.system(size: 13, weight: page == item ? .semibold : .regular))
             .foregroundStyle(page == item ? .white : SoundHubPalette.muted)
             .padding(.horizontal, 11).padding(.vertical, 9)
+            .frame(minHeight: 38)
             .background(page == item ? Color.white.opacity(0.085) : .clear, in: RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(item.rawValue)
+        .accessibilityValue(page == item ? "Current page" : "")
     }
 
     private var discover: some View {
@@ -611,6 +699,7 @@ private struct SoundHubWindow: View {
                     }
                     .labelsHidden().pickerStyle(.menu).frame(width: 145)
                 }
+                .onChange(of: discoverySort) { newSort in model.updateRemoteSort(newSort) }
                 if discoverRoots.isEmpty {
                     VStack(spacing: 9) {
                         Image(systemName: "waveform").font(.system(size: 24)).foregroundStyle(SoundHubPalette.muted)
@@ -635,7 +724,23 @@ private struct SoundHubWindow: View {
                         }
                     }
                 }
-                Text("Local preview data · voting, favorites, branches, and profiles update in this session")
+                if model.hasMoreServiceSongs {
+                    Button {
+                        model.loadMoreRemoteSongs()
+                    } label: {
+                        HStack(spacing: 8) {
+                            if model.isLoadingMoreServiceSongs { ProgressView().controlSize(.small) }
+                            Text(model.isLoadingMoreServiceSongs ? "Loading…" : "Load more songs")
+                        }
+                        .frame(maxWidth: .infinity).padding(.vertical, 11)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isLoadingMoreServiceSongs)
+                    .accessibilityHint("Loads the next page of SoundHub songs")
+                }
+                Text(model.serviceSongCount > 0
+                     ? "Showing \(model.loadedServiceSongCount) of \(model.serviceSongCount) server songs. Member actions save on this Mac."
+                     : "Local catalog data · member actions save on this Mac")
                     .font(.system(size: 10)).foregroundStyle(SoundHubPalette.muted)
             }
             .padding(28)
@@ -723,6 +828,7 @@ private struct SoundHubWindow: View {
                     libraryStat("Songs", value: "\(model.createdSongIDs.count)")
                     libraryStat("Branches", value: "\(model.forkedSongIDs.count)")
                     libraryStat("Favorites", value: "\(model.favoriteIDs.count)")
+                    libraryStat("Votes", value: "\(model.votes.values.filter { $0 != 0 }.count)")
                 }
                 Picker("Library section", selection: $librarySection) {
                     ForEach(LibrarySection.allCases) { section in Text(section.rawValue).tag(section) }
@@ -734,6 +840,12 @@ private struct SoundHubWindow: View {
                         if librarySection == .favorites {
                             Button { model.toggleFavorite(song.id) } label: { Image(systemName: "star.slash") }
                                 .buttonStyle(.bordered).help("Remove from favorites")
+                        }
+                        if librarySection == .votes {
+                            Label(model.votes[song.id] == 1 ? "Upvoted" : "Downvoted",
+                                  systemImage: model.votes[song.id] == 1 ? "hand.thumbsup.fill" : "hand.thumbsdown.fill")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(model.votes[song.id] == 1 ? SoundHubPalette.accent : .red)
                         }
                     }
                 }
@@ -817,6 +929,7 @@ private struct SoundHubWindow: View {
         case .myMusic: model.songs.filter { model.createdSongIDs.contains($0.id) && $0.parentID == nil }
         case .branches: model.songs.filter { model.forkedSongIDs.contains($0.id) }
         case .favorites: model.songs.filter { model.favoriteIDs.contains($0.id) }
+        case .votes: model.songs.filter { (model.votes[$0.id] ?? 0) != 0 }
         }
     }
 
@@ -825,6 +938,7 @@ private struct SoundHubWindow: View {
         case .myMusic: "Create a new song to see it in My Music."
         case .branches: "Create a branch from a song tree to see it here."
         case .favorites: "Favorite a song to save it here."
+        case .votes: "Vote on a song to see it here."
         }
     }
 
@@ -839,14 +953,22 @@ private struct SoundHubWindow: View {
             Spacer(minLength: 8)
             HStack(spacing: 20) {
                 Button { moveSelection(by: -1) } label: { Image(systemName: "backward.end.fill") }
-                    .help("Select previous catalog song").disabled(catalogSongs.count < 2)
+                    .help("Select previous catalog song")
+                    .accessibilityLabel("Previous song")
+                    .frame(minWidth: 36, minHeight: 36)
+                    .disabled(catalogSongs.count < 2)
                 Button { playback.toggle(song: selectedSong) } label: {
                     Image(systemName: playback.currentSongID == selectedSong.id && playback.isPlaying ? "pause.fill" : "play.fill")
                 }
                     .font(.system(size: 14)).help(selectedSong.canPlay ? "Play or pause this song" : "No audio file attached to this local preview song")
+                    .accessibilityLabel(playback.currentSongID == selectedSong.id && playback.isPlaying ? "Pause song" : "Play song")
+                    .frame(minWidth: 36, minHeight: 36)
                     .disabled(!selectedSong.canPlay)
                 Button { moveSelection(by: 1) } label: { Image(systemName: "forward.end.fill") }
-                    .help("Select next catalog song").disabled(catalogSongs.count < 2)
+                    .help("Select next catalog song")
+                    .accessibilityLabel("Next song")
+                    .frame(minWidth: 36, minHeight: 36)
+                    .disabled(catalogSongs.count < 2)
             }.buttonStyle(.plain).foregroundStyle(SoundHubPalette.muted)
             Spacer(minLength: 8)
             Text(playback.statusMessage ?? (selectedSong.canPlay ? "Ready to play" : "No audio attached in local preview"))
@@ -874,8 +996,11 @@ private struct SoundHubWindow: View {
 
     private var discoverRoots: [Song] {
         let matchingRoots = Set(filteredSongs.map(\.rootID))
+        let roots = catalogSongs.filter { $0.parentID == nil && matchingRoots.contains($0.rootID) }
+        // The service already applies the selected sort across the full result set.
+        if model.loadedServicePages > 0 { return roots }
         let positions = Dictionary(uniqueKeysWithValues: catalogSongs.enumerated().map { ($0.element.id, $0.offset) })
-        return catalogSongs.filter { $0.parentID == nil && matchingRoots.contains($0.rootID) }.sorted {
+        return roots.sorted {
             switch discoverySort {
             case .newest:
                 return positions[$0.id, default: 0] > positions[$1.id, default: 0]
@@ -960,6 +1085,22 @@ private struct CreateSongView: View {
     @State private var selectedAudioURL: URL?
     @State private var showingFilePicker = false
 
+    private var titleValidationMessage: String? {
+        let value = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+        if value.count < 3 { return "Use at least 3 characters." }
+        if value.count > 15 { return "Keep the title to 15 characters or fewer." }
+        if value.range(of: "^[A-Za-z0-9 ]+$", options: .regularExpression) == nil {
+            return "Use letters, numbers, and spaces only."
+        }
+        return nil
+    }
+
+    private var canCreateSong: Bool {
+        let value = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (3...15).contains(value.count) && value.range(of: "^[A-Za-z0-9 ]+$", options: .regularExpression) != nil
+    }
+
     let parent: Song?
     let onCreated: (Song) -> Void
 
@@ -973,7 +1114,17 @@ private struct CreateSongView: View {
                 }
                 VStack(alignment: .leading, spacing: 15) {
                     labeledField("Song title", placeholder: "Give your idea a name") {
-                        TextField("Give your idea a name", text: $title).textFieldStyle(.roundedBorder)
+                        TextField("Give your idea a name", text: $title)
+                            .textFieldStyle(.roundedBorder)
+                            .onChange(of: title) { newValue in
+                                if newValue.count > 15 { title = String(newValue.prefix(15)) }
+                            }
+                    }
+                    if let titleValidationMessage {
+                        Text(titleValidationMessage).font(.system(size: 10)).foregroundStyle(.orange)
+                    } else if !title.isEmpty {
+                        Label("Title looks good", systemImage: "checkmark.circle.fill")
+                            .font(.system(size: 10)).foregroundStyle(SoundHubPalette.accent)
                     }
                     labeledField("Genre", placeholder: "Ambient, indie, electronic…") {
                         TextField("Ambient, indie, electronic…", text: $genre).textFieldStyle(.roundedBorder)
@@ -989,16 +1140,16 @@ private struct CreateSongView: View {
                         Text(selectedAudioURL?.lastPathComponent ?? "No audio selected")
                             .font(.system(size: 10)).foregroundStyle(SoundHubPalette.muted).lineLimit(1)
                     }
-                    Label("Local preview only. The API and upload connection will be added later.", systemImage: "info.circle")
+                    Label("Songs are saved on this Mac. Server upload is not connected yet.", systemImage: "info.circle")
                         .font(.system(size: 10)).foregroundStyle(SoundHubPalette.muted)
                     Button {
-                        guard title.trimmingCharacters(in: .whitespacesAndNewlines).count >= 3 else { return }
-                        model.addSong(title: title, genre: genre, description: description, mediaURL: selectedAudioURL, parent: parent)
+                        guard canCreateSong else { return }
+                        model.addSong(title: title.trimmingCharacters(in: .whitespacesAndNewlines), genre: genre, description: description, mediaURL: selectedAudioURL, parent: parent)
                         if let created = model.songs.last { onCreated(created) }
                     } label: {
                         Label(parent == nil ? "Create song" : "Create branch", systemImage: parent == nil ? "plus" : "arrow.branch")
                     }
-                    .buttonStyle(.borderedProminent).disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).count < 3)
+                    .buttonStyle(.borderedProminent).disabled(!canCreateSong)
                 }
                 .padding(20).frame(maxWidth: 610, alignment: .leading).background(SoundHubPalette.panel, in: RoundedRectangle(cornerRadius: 14))
             }.padding(28)
@@ -1153,20 +1304,30 @@ private struct SongCard: View {
             .overlay(RoundedRectangle(cornerRadius: 13).stroke(isSelected ? SoundHubPalette.accent.opacity(0.65) : .clear, lineWidth: 1))
             }.buttonStyle(.plain)
             HStack(spacing: 8) {
-                Button(action: onPlay) { Image(systemName: "play.fill") }.help("Play song")
+                Button(action: onPlay) { Image(systemName: "play.fill").frame(minWidth: 28, minHeight: 28) }
+                    .help("Play song").accessibilityLabel("Play \(song.title)")
                 Button(action: onFavorite) {
                     Label(isFavorite ? "Saved" : "Favorite", systemImage: isFavorite ? "star.fill" : "star")
-                }.help(isFavorite ? "Remove from favorites" : "Add to favorites")
+                }
+                .help(isFavorite ? "Remove from favorites" : "Add to favorites")
+                .accessibilityLabel(isFavorite ? "Remove \(song.title) from favorites" : "Add \(song.title) to favorites")
+                .accessibilityValue(isFavorite ? "Favorited" : "Not favorited")
                 Button { onVote(1) } label: {
                     Label("\(song.likes)", systemImage: vote == 1 ? "hand.thumbsup.fill" : "hand.thumbsup")
-                }.help("Upvote")
-                Button { onVote(-1) } label: { Image(systemName: vote == -1 ? "hand.thumbsdown.fill" : "hand.thumbsdown") }
-                    .help("Downvote")
+                        .frame(minWidth: 28, minHeight: 28)
+                }.help("Upvote").accessibilityLabel("Upvote \(song.title), \(song.likes) likes")
+                Button { onVote(-1) } label: {
+                    Image(systemName: vote == -1 ? "hand.thumbsdown.fill" : "hand.thumbsdown")
+                        .frame(minWidth: 28, minHeight: 28)
+                }
+                .help("Downvote")
+                .accessibilityLabel(vote == -1 ? "Remove downvote from \(song.title)" : "Downvote \(song.title)")
                 ShareLink(item: "SoundHub track: \(song.title) by \(song.creator)") {
-                    Image(systemName: "square.and.arrow.up")
-                }.help("Share song")
+                    Image(systemName: "square.and.arrow.up").frame(minWidth: 28, minHeight: 28)
+                }.help("Share song").accessibilityLabel("Share \(song.title)")
                 Spacer(minLength: 0)
-                Button(action: onBranch) { Image(systemName: "arrow.branch") }.help("Create a branch")
+                Button(action: onBranch) { Image(systemName: "arrow.branch").frame(minWidth: 28, minHeight: 28) }
+                    .help("Create a branch").accessibilityLabel("Create a branch from \(song.title)")
             }
             .font(.system(size: 9, weight: .medium)).buttonStyle(.plain).foregroundStyle(SoundHubPalette.muted)
             .padding(.horizontal, 3)

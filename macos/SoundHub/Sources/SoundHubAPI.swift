@@ -39,8 +39,37 @@ struct SoundHubSong: Decodable, Identifiable, Hashable {
     }
 }
 
+/// The legacy `/allSongSort` endpoint is fixed at 24 rows per page.
+/// Keep its SQL order key closed to known literals rather than accepting strings.
+enum SoundHubCatalogSort: String, CaseIterable, Identifiable {
+    case newest
+    case mostLiked
+    case mostBranched
+    case title
+
+    var id: String { rawValue }
+
+    fileprivate var legacyOrderKey: String {
+        switch self {
+        case .newest: "createdAt"
+        case .mostLiked: "like"
+        case .mostBranched: "forks"
+        case .title: "title"
+        }
+    }
+}
+
+struct SoundHubSongPage: Decodable {
+    static let pageSize = 24
+    let songs: [SoundHubSong]
+    let number: Int
+
+    var totalPages: Int { (number + Self.pageSize - 1) / Self.pageSize }
+}
+
 enum SoundHubAPIError: Error, LocalizedError {
     case invalidBaseURL
+    case invalidPage
     case invalidResponse
     case httpStatus(Int)
     case encoding(String)
@@ -51,6 +80,8 @@ enum SoundHubAPIError: Error, LocalizedError {
         switch self {
         case .invalidBaseURL:
             return "The SoundHub API base URL must use HTTP or HTTPS and include a host."
+        case .invalidPage:
+            return "SoundHub catalog pages start at page 1."
         case .invalidResponse:
             return "The SoundHub API returned an invalid HTTP response."
         case let .httpStatus(status):
@@ -103,6 +134,25 @@ struct SoundHubAPI {
     /// GET /allSongs returns a flat array of song nodes.
     func allSongs() async throws -> [SoundHubSong] {
         try await send(path: "allSongs", method: "GET")
+    }
+
+    /// Fetch one 24-song page from the legacy catalog route. This avoids downloading
+    /// and decoding the entire catalog when a screen only needs the first results.
+    /// The sort key is selected from a closed enum because the old server interpolates it into SQL.
+    func sortedSongs(sort: SoundHubCatalogSort, page: Int) async throws -> SoundHubSongPage {
+        guard page > 0 else { throw SoundHubAPIError.invalidPage }
+        let body: Data
+        do {
+            body = try JSONEncoder().encode(SortRequest(order: sort.legacyOrderKey, page: page))
+        } catch {
+            throw SoundHubAPIError.encoding(error.localizedDescription)
+        }
+        return try await send(path: "allSongSort", method: "POST", body: body)
+    }
+
+    /// GET /numSongs returns the total catalog row count.
+    func songCount() async throws -> Int {
+        try await send(path: "numSongs", method: "GET")
     }
 
     /// POST /tree with {"rootId": ...} returns that tree as a flat node array.
@@ -162,4 +212,9 @@ struct SoundHubAPI {
 
 private struct TreeRequest: Encodable {
     let rootId: String
+}
+
+private struct SortRequest: Encodable {
+    let order: String
+    let page: Int
 }

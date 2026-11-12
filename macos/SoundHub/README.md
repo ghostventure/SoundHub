@@ -4,7 +4,7 @@ Native SwiftUI interface for SoundHub’s main workflows. The app uses the legac
 
 The current interface includes Discover with search/sorting and track actions, a hierarchical Song Tree, MyHub collections, local profile editing, song/branch creation, a SoundCloud import form, About, and a persistent player. Local sign-in is a demo interaction only; passwords and signed-in sessions are not stored.
 
-The About screen can connect to a configured SoundHub service and load its catalog. The existing Express service is not connected for account authentication or writes. SoundCloud metadata lookup, remote writes, cloud audio upload, and real account collections remain for API integration. The import form accepts a track URL and metadata manually.
+The About screen can connect to a configured SoundHub service. Discover loads the catalog in 24-song pages, and Song Tree refreshes its selected root. The existing Express service is not connected for account authentication or writes. SoundCloud metadata lookup, remote writes, cloud audio upload, and real account collections remain for API integration. The import form accepts a track URL and metadata manually.
 
 This port is based on the legacy React/Node source in this repository. No separate Windows client source was available for comparison, so this build does not claim Windows feature parity.
 
