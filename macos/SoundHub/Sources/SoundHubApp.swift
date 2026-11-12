@@ -87,20 +87,44 @@ private enum SoundHubPalette {
 
 @MainActor
 private final class SoundHubViewModel: ObservableObject {
-    @Published private(set) var songs = SampleCatalog.songs
-    @Published private(set) var favoriteIDs: Set<String> = ["root-02"]
-    @Published private(set) var votes: [String: Int] = [:]
-    @Published private(set) var createdSongIDs: Set<String> = []
-    @Published private(set) var forkedSongIDs: Set<String> = []
+    @Published private(set) var songs: [Song]
+    @Published private(set) var favoriteIDs: Set<String>
+    @Published private(set) var votes: [String: Int]
+    @Published private(set) var createdSongIDs: Set<String>
+    @Published private(set) var forkedSongIDs: Set<String>
     @Published private(set) var isSignedIn = false
-    @Published private(set) var displayName = "Guest"
+    @Published private(set) var displayName: String
     @Published private(set) var profileMessage: String?
+    @Published var apiBaseURLText = UserDefaults.standard.string(forKey: "SoundHubAPIBaseURL") ?? ""
+    @Published private(set) var serviceMessage = "Not connected to a SoundHub server."
+    @Published private(set) var isLoadingService = false
+
+    private let persistence = SoundHubLocalPersistence()
+
+    init() {
+        if let state = persistence.load() {
+            songs = state.songs
+            favoriteIDs = state.favoriteIDs
+            votes = state.votes
+            createdSongIDs = state.createdSongIDs
+            forkedSongIDs = state.forkedSongIDs
+            displayName = state.displayName
+        } else {
+            songs = SampleCatalog.songs
+            favoriteIDs = ["root-02"]
+            votes = [:]
+            createdSongIDs = []
+            forkedSongIDs = []
+            displayName = "Guest"
+        }
+    }
 
     func signIn(as name: String) {
         let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return }
         displayName = cleaned
         isSignedIn = true
+        persist()
     }
 
     func signOut() {
@@ -111,6 +135,7 @@ private final class SoundHubViewModel: ObservableObject {
     func toggleFavorite(_ songID: String) {
         if favoriteIDs.contains(songID) { favoriteIDs.remove(songID) }
         else { favoriteIDs.insert(songID) }
+        persist()
     }
 
     func vote(_ value: Int, for songID: String) {
@@ -121,6 +146,7 @@ private final class SoundHubViewModel: ObservableObject {
         var song = songs[index]
         song.likes = max(0, song.likes + nextValue - oldValue)
         songs[index] = song
+        persist()
     }
 
     func addSong(title: String, creator: String? = nil, genre: String, description: String, mediaURL: URL?, sourceURL: String? = nil, parent: Song?) {
@@ -147,14 +173,164 @@ private final class SoundHubViewModel: ObservableObject {
             songs[parentIndex].branches += 1
             forkedSongIDs.insert(id)
         }
-        profileMessage = "Added to this local preview. It is not saved to SoundHub yet."
+        profileMessage = "Saved on this Mac. It has not been sent to the SoundHub server."
+        persist()
     }
 
     func saveProfile(name: String) {
         let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return }
         displayName = cleaned
-        profileMessage = "Profile updated in this local preview."
+        for index in songs.indices where createdSongIDs.contains(songs[index].id) {
+            songs[index].creator = cleaned
+        }
+        profileMessage = "Profile saved on this Mac."
+        persist()
+    }
+
+    func connectToService() {
+        let value = apiBaseURLText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: value),
+              let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme),
+              url.host != nil else {
+            serviceMessage = "Enter a valid HTTP or HTTPS SoundHub service address."
+            return
+        }
+
+        UserDefaults.standard.set(url.absoluteString, forKey: "SoundHubAPIBaseURL")
+        isLoadingService = true
+        serviceMessage = "Connecting and loading the catalog…"
+        Task {
+            do {
+                let remoteSongs = try await SoundHubAPI(baseURL: url).allSongs()
+                let localSongs = songs.filter { createdSongIDs.contains($0.id) }
+                let converted = remoteSongs.enumerated().map { index, remote in
+                    Song(id: remote.uuid, title: remote.title,
+                         creator: remote.authorName ?? "SoundHub member",
+                         genre: remote.genre ?? "Uncategorized", branches: remote.forks,
+                         likes: remote.like, color: SampleCatalog.apiColors[index % SampleCatalog.apiColors.count],
+                         parentID: remote.parentId, rootID: remote.rootId,
+                         description: remote.description ?? "",
+                         mediaURL: remote.url.flatMap { URL(string: $0) }, isSample: false)
+                }
+                let remoteIDs = Set(converted.map(\.id))
+                songs = converted + localSongs.filter { !remoteIDs.contains($0.id) }
+                persist()
+                serviceMessage = "Connected. Loaded \(converted.count) songs. Local-only actions are still stored on this Mac."
+            } catch {
+                serviceMessage = "Couldn't load the SoundHub catalog: \(error.localizedDescription)"
+            }
+            isLoadingService = false
+        }
+    }
+
+    private func persist() {
+        do {
+            try persistence.save(LocalSoundHubState(
+                songs: songs,
+                favoriteIDs: favoriteIDs,
+                votes: votes,
+                createdSongIDs: createdSongIDs,
+                forkedSongIDs: forkedSongIDs,
+                displayName: displayName
+            ))
+        } catch {
+            profileMessage = "Couldn't save SoundHub data on this Mac: \(error.localizedDescription)"
+        }
+    }
+}
+
+private struct LocalSoundHubState {
+    var songs: [Song]
+    var favoriteIDs: Set<String>
+    var votes: [String: Int]
+    var createdSongIDs: Set<String>
+    var forkedSongIDs: Set<String>
+    var displayName: String
+}
+
+private struct StoredSoundHubState: Codable {
+    var songs: [StoredSong]
+    var favoriteIDs: [String]
+    var votes: [String: Int]
+    var createdSongIDs: [String]
+    var forkedSongIDs: [String]
+    var displayName: String
+}
+
+private struct StoredSong: Codable {
+    var id: String
+    var title: String
+    var creator: String
+    var genre: String
+    var branches: Int
+    var likes: Int
+    var red: Double
+    var green: Double
+    var blue: Double
+    var parentID: String?
+    var rootID: String
+    var description: String
+    var mediaURL: String?
+    var isSample: Bool
+    var sourceURL: String?
+
+    init(_ song: Song) {
+        id = song.id
+        title = song.title
+        creator = song.creator
+        genre = song.genre
+        branches = song.branches
+        likes = song.likes
+        let color = NSColor(song.color).usingColorSpace(.deviceRGB) ?? .white
+        red = Double(color.redComponent)
+        green = Double(color.greenComponent)
+        blue = Double(color.blueComponent)
+        parentID = song.parentID
+        rootID = song.rootID
+        description = song.description
+        mediaURL = song.mediaURL?.absoluteString
+        isSample = song.isSample
+        sourceURL = song.sourceURL
+    }
+
+    var song: Song {
+        Song(id: id, title: title, creator: creator, genre: genre, branches: branches,
+             likes: likes, color: Color(red: red, green: green, blue: blue),
+             parentID: parentID, rootID: rootID, description: description,
+             mediaURL: mediaURL.flatMap { URL(string: $0) }, isSample: isSample,
+             sourceURL: sourceURL)
+    }
+}
+
+private struct SoundHubLocalPersistence {
+    private var fileURL: URL? {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+            .first?.appendingPathComponent("SoundHub", isDirectory: true)
+            .appendingPathComponent("SoundHubStore.json")
+    }
+
+    func load() -> LocalSoundHubState? {
+        guard let fileURL, let data = try? Data(contentsOf: fileURL),
+              let stored = try? JSONDecoder().decode(StoredSoundHubState.self, from: data) else { return nil }
+        return LocalSoundHubState(songs: stored.songs.map(\.song),
+                                  favoriteIDs: Set(stored.favoriteIDs), votes: stored.votes,
+                                  createdSongIDs: Set(stored.createdSongIDs),
+                                  forkedSongIDs: Set(stored.forkedSongIDs),
+                                  displayName: stored.displayName)
+    }
+
+    func save(_ state: LocalSoundHubState) throws {
+        guard let fileURL else { throw CocoaError(.fileWriteNoSuchFile) }
+        try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        let stored = StoredSoundHubState(songs: state.songs.map(StoredSong.init),
+                                         favoriteIDs: state.favoriteIDs.sorted(), votes: state.votes,
+                                         createdSongIDs: state.createdSongIDs.sorted(),
+                                         forkedSongIDs: state.forkedSongIDs.sorted(),
+                                         displayName: state.displayName)
+        let data = try JSONEncoder().encode(stored)
+        try data.write(to: fileURL, options: .atomic)
     }
 }
 
@@ -215,7 +391,7 @@ private struct TreeEntry: Identifiable {
 private struct Song: Identifiable, Hashable {
     let id: String
     let title: String
-    let creator: String
+    var creator: String
     let genre: String
     var branches: Int
     var likes: Int
@@ -551,7 +727,7 @@ private struct SoundHubWindow: View {
                 Picker("Library section", selection: $librarySection) {
                     ForEach(LibrarySection.allCases) { section in Text(section.rawValue).tag(section) }
                 }.pickerStyle(.segmented).frame(maxWidth: 470)
-                sectionHeader(librarySection.rawValue, detail: "Local preview · changes stay in this session")
+                sectionHeader(librarySection.rawValue, detail: "Saved on this Mac")
                 ForEach(librarySongs) { song in
                     HStack(spacing: 8) {
                         Button { openSongTree(song) } label: { SongRow(song: song) }.buttonStyle(.plain)
@@ -615,8 +791,22 @@ private struct SoundHubWindow: View {
                     .font(.system(size: 14)).foregroundStyle(SoundHubPalette.muted).fixedSize(horizontal: false, vertical: true)
                 Label("Native macOS interface preview", systemImage: "macbook")
                     .font(.system(size: 12, weight: .semibold)).foregroundStyle(SoundHubPalette.accent)
-                Text("This build mirrors the main SoundHub workflows with local preview data. Changes are temporary and are not sent to an account or server.")
+                Text("Songs, branches, favorites, votes, and profile name changes are saved on this Mac. Connect a SoundHub service below to load its catalog; member actions still stay local until the service supports authenticated writes.")
                     .font(.system(size: 11)).foregroundStyle(SoundHubPalette.muted).fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("SoundHub service").font(.system(size: 14, weight: .semibold))
+                    TextField("https://your-soundhub-service", text: $model.apiBaseURLText)
+                        .textFieldStyle(.roundedBorder)
+                    HStack {
+                        Button { model.connectToService() } label: {
+                            if model.isLoadingService { ProgressView().controlSize(.small) }
+                            else { Text("Connect and load catalog") }
+                        }.disabled(model.isLoadingService)
+                        Text(model.serviceMessage).font(.system(size: 10)).foregroundStyle(SoundHubPalette.muted)
+                    }
+                }
+                .padding(16).frame(maxWidth: 640, alignment: .leading)
+                .background(SoundHubPalette.panel, in: RoundedRectangle(cornerRadius: 12))
                 Link("SoundHub source on GitHub", destination: URL(string: "https://github.com/SoundHub/SoundHub")!)
             }.padding(28)
         }
