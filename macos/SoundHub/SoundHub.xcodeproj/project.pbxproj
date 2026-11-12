@@ -1,0 +1,31 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 56;
+	objects = {
+		A00000000000000000000001 /* Build File */ = {isa = PBXBuildFile; fileRef = A00000000000000000000002 /* SoundHubApp.swift */; };
+		A00000000000000000000013 /* SoundHubAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000014 /* SoundHubAPI.swift */; };
+		A00000000000000000000018 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000017 /* Assets.xcassets */; };
+		A00000000000000000000002 /* SoundHubApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SoundHubApp.swift; sourceTree = "<group>"; };
+		A00000000000000000000014 /* SoundHubAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SoundHubAPI.swift; sourceTree = "<group>"; };
+		A00000000000000000000017 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A00000000000000000000003 /* SoundHub.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SoundHub.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A00000000000000000000004 /* Sources */ = {isa = PBXGroup; children = (A00000000000000000000002 /* SoundHubApp.swift */, A00000000000000000000014 /* SoundHubAPI.swift */,); path = Sources; sourceTree = "<group>"; };
+		A00000000000000000000015 /* Assets */ = {isa = PBXGroup; children = (A00000000000000000000017 /* Assets.xcassets */,); path = .; sourceTree = "<group>"; };
+		A00000000000000000000005 = {isa = PBXGroup; children = (A00000000000000000000004 /* Sources */, A00000000000000000000015 /* Assets */, A00000000000000000000006 /* Products */,); sourceTree = "<group>"; };
+		A00000000000000000000006 /* Products */ = {isa = PBXGroup; children = (A00000000000000000000003 /* SoundHub.app */,); name = Products; sourceTree = "<group>"; };
+		A00000000000000000000007 /* SoundHub */ = {isa = PBXNativeTarget; buildConfigurationList = A00000000000000000000010 /* Target Configurations */; buildPhases = (A00000000000000000000009 /* Sources */, A0000000000000000000000A /* Frameworks */, A0000000000000000000000B /* Resources */,); buildRules = (); dependencies = (); name = SoundHub; productName = SoundHub; productReference = A00000000000000000000003 /* SoundHub.app */; productType = "com.apple.product-type.application"; };
+		A00000000000000000000009 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001 /* Build File */, A00000000000000000000013 /* SoundHubAPI.swift in Sources */,); runOnlyForDeploymentPostprocessing = 0; };
+		A0000000000000000000000A /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A0000000000000000000000B /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000018 /* Assets.xcassets in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
+		A0000000000000000000000C /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = SoundHub; INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music"; INFOPLIST_KEY_NSPrincipalClass = NSApplication; MACOSX_DEPLOYMENT_TARGET = 13.0; PRODUCT_BUNDLE_IDENTIFIER = org.soundhub.mac; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0;}; name = Debug; };
+		A0000000000000000000000D /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = SoundHub; INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music"; INFOPLIST_KEY_NSPrincipalClass = NSApplication; MACOSX_DEPLOYMENT_TARGET = 13.0; PRODUCT_BUNDLE_IDENTIFIER = org.soundhub.mac; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0;}; name = Release; };
+		A0000000000000000000000E /* Project Debug */ = {isa = XCBuildConfiguration; buildSettings = {MACOSX_DEPLOYMENT_TARGET = 13.0;}; name = Debug; };
+		A0000000000000000000000F /* Project Release */ = {isa = XCBuildConfiguration; buildSettings = {MACOSX_DEPLOYMENT_TARGET = 13.0;}; name = Release; };
+		A00000000000000000000010 /* Target Configurations */ = {isa = XCConfigurationList; buildConfigurations = (A0000000000000000000000C /* Debug */, A0000000000000000000000D /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A00000000000000000000011 /* Project Configurations */ = {isa = XCConfigurationList; buildConfigurations = (A0000000000000000000000E /* Project Debug */, A0000000000000000000000F /* Project Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A00000000000000000000012 /* Project */ = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastUpgradeCheck = 1600;}; buildConfigurationList = A00000000000000000000011; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base,); mainGroup = A00000000000000000000005; productRefGroup = A00000000000000000000006 /* Products */; projectDirPath = ""; projectRoot = ""; targets = (A00000000000000000000007 /* SoundHub */,); };
+	};
+	rootObject = A00000000000000000000012 /* Project */;
+}
