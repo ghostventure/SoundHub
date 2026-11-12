@@ -1,6 +1,6 @@
 # SoundHub for macOS
 
-Native SwiftUI interface for SoundHub’s main workflows. The app uses the legacy service’s song-node model, with local preview data as its initial catalog. Songs, branches, favorites, votes, and profile name edits persist in `~/Library/Application Support/SoundHub/SoundHubStore.json`.
+Native SwiftUI interface for SoundHub’s main workflows. The app uses the legacy service’s song-node model, with local preview data as its initial catalog. Songs, branches, favorites, votes, and profile name/image edits persist in `~/Library/Application Support/SoundHub/SoundHubStore.json`.
 
 The current interface includes Discover with search/sorting and track actions, a hierarchical Song Tree, MyHub collections, local profile editing, song/branch creation, a SoundCloud import form, About, and a persistent player. Local sign-in is a demo interaction only; passwords and signed-in sessions are not stored.
 

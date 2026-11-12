@@ -94,6 +94,7 @@ private final class SoundHubViewModel: ObservableObject {
     @Published private(set) var forkedSongIDs: Set<String>
     @Published private(set) var isSignedIn = false
     @Published private(set) var displayName: String
+    @Published private(set) var profileImageURL: String?
     @Published private(set) var profileMessage: String?
     @Published var apiBaseURLText = UserDefaults.standard.string(forKey: "SoundHubAPIBaseURL") ?? ""
     @Published private(set) var serviceMessage = "Not connected to a SoundHub server."
@@ -121,6 +122,7 @@ private final class SoundHubViewModel: ObservableObject {
             createdSongIDs = state.createdSongIDs
             forkedSongIDs = state.forkedSongIDs
             displayName = state.displayName
+            profileImageURL = state.profileImageURL
         } else {
             songs = SampleCatalog.songs
             favoriteIDs = ["root-02"]
@@ -128,6 +130,7 @@ private final class SoundHubViewModel: ObservableObject {
             createdSongIDs = []
             forkedSongIDs = []
             displayName = "Guest"
+            profileImageURL = nil
         }
     }
 
@@ -190,9 +193,20 @@ private final class SoundHubViewModel: ObservableObject {
         persist()
     }
 
-    func saveProfile(name: String) {
+    func saveProfile(name: String, imageURL: String? = nil) {
         let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return }
+        let cleanedImageURL = imageURL?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let cleanedImageURL, !cleanedImageURL.isEmpty {
+            guard let url = URL(string: cleanedImageURL),
+                  url.scheme?.lowercased() == "https", url.host != nil else {
+                profileMessage = "Profile image must use a valid HTTPS URL."
+                return
+            }
+            profileImageURL = cleanedImageURL
+        } else {
+            profileImageURL = nil
+        }
         displayName = cleaned
         for index in songs.indices where createdSongIDs.contains(songs[index].id) {
             songs[index].creator = cleaned
@@ -314,7 +328,8 @@ private final class SoundHubViewModel: ObservableObject {
                 votes: votes,
                 createdSongIDs: createdSongIDs,
                 forkedSongIDs: forkedSongIDs,
-                displayName: displayName
+                displayName: displayName,
+                profileImageURL: profileImageURL
             ))
         } catch {
             profileMessage = "Couldn't save SoundHub data on this Mac: \(error.localizedDescription)"
@@ -329,6 +344,7 @@ private struct LocalSoundHubState {
     var createdSongIDs: Set<String>
     var forkedSongIDs: Set<String>
     var displayName: String
+    var profileImageURL: String?
 }
 
 private struct StoredSoundHubState: Codable {
@@ -338,6 +354,7 @@ private struct StoredSoundHubState: Codable {
     var createdSongIDs: [String]
     var forkedSongIDs: [String]
     var displayName: String
+    var profileImageURL: String?
 }
 
 private struct StoredSong: Codable {
@@ -399,7 +416,8 @@ private struct SoundHubLocalPersistence {
                                   favoriteIDs: Set(stored.favoriteIDs), votes: stored.votes,
                                   createdSongIDs: Set(stored.createdSongIDs),
                                   forkedSongIDs: Set(stored.forkedSongIDs),
-                                  displayName: stored.displayName)
+                                  displayName: stored.displayName,
+                                  profileImageURL: stored.profileImageURL)
     }
 
     func save(_ state: LocalSoundHubState) throws {
@@ -410,7 +428,8 @@ private struct SoundHubLocalPersistence {
                                          favoriteIDs: state.favoriteIDs.sorted(), votes: state.votes,
                                          createdSongIDs: state.createdSongIDs.sorted(),
                                          forkedSongIDs: state.forkedSongIDs.sorted(),
-                                         displayName: state.displayName)
+                                         displayName: state.displayName,
+                                         profileImageURL: state.profileImageURL)
         let data = try JSONEncoder().encode(stored)
         try data.write(to: fileURL, options: .atomic)
     }
@@ -519,6 +538,7 @@ private struct SoundHubWindow: View {
     @State private var showingSignIn = false
     @State private var branchParent: Song?
     @State private var profileName = "Guest"
+    @State private var profileImageText = ""
     @StateObject private var playback = SoundHubPlaybackModel()
 
     private var catalogSongs: [Song] { model.songs }
@@ -863,8 +883,15 @@ private struct SoundHubWindow: View {
             VStack(alignment: .leading, spacing: 22) {
                 pageHeading("Profile", subtitle: "Manage your SoundHub identity.")
                 HStack(spacing: 16) {
-                    Image(systemName: "person.crop.circle.fill")
-                        .font(.system(size: 58)).foregroundStyle(SoundHubPalette.accent)
+                    AsyncImage(url: model.profileImageURL.flatMap { URL(string: $0) }) { phase in
+                        if let image = phase.image {
+                            image.resizable().scaledToFill()
+                        } else {
+                            Image(systemName: "person.crop.circle.fill")
+                                .resizable().scaledToFit().foregroundStyle(SoundHubPalette.accent).padding(5)
+                        }
+                    }
+                    .frame(width: 58, height: 58).clipShape(Circle())
                     VStack(alignment: .leading, spacing: 5) {
                         Text(model.isSignedIn ? model.displayName : "Guest")
                             .font(.system(size: 20, weight: .bold, design: .rounded))
@@ -875,7 +902,11 @@ private struct SoundHubWindow: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Display name").font(.system(size: 12, weight: .semibold))
                     TextField("Your name", text: $profileName).textFieldStyle(.roundedBorder)
-                    Button("Save profile") { model.saveProfile(name: profileName) }.buttonStyle(.borderedProminent)
+                    Text("Profile image URL").font(.system(size: 12, weight: .semibold))
+                    TextField("https://…", text: $profileImageText).textFieldStyle(.roundedBorder)
+                    Button("Save profile") {
+                        model.saveProfile(name: profileName, imageURL: profileImageText)
+                    }.buttonStyle(.borderedProminent)
                     if let message = model.profileMessage {
                         Text(message).font(.system(size: 10)).foregroundStyle(SoundHubPalette.muted)
                     }
@@ -883,7 +914,10 @@ private struct SoundHubWindow: View {
                 .padding(20).frame(maxWidth: 520, alignment: .leading).background(SoundHubPalette.panel, in: RoundedRectangle(cornerRadius: 14))
             }.padding(28)
         }
-        .onAppear { profileName = model.displayName }
+        .onAppear {
+            profileName = model.displayName
+            profileImageText = model.profileImageURL ?? ""
+        }
     }
 
     private var signInRequired: some View {

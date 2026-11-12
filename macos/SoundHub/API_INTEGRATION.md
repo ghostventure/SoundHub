@@ -1,6 +1,6 @@
 # API integration phase
 
-The SwiftUI app currently persists its song-node catalog and member actions locally in Application Support. It does not call SoundHub or SoundCloud endpoints, so local changes do not reach server data or other devices.
+The SwiftUI app persists its song-node catalog and member actions locally in Application Support. It can read paginated catalog data and selected song trees from a configured SoundHub service. Local member changes do not reach server data or other devices.
 
 ## Existing SoundHub API
 
@@ -16,8 +16,8 @@ The intended import flow is to submit a SoundCloud track URL, resolve its metada
 
 - Discover search, sort, song selection, local voting, favorites, and branching.
 - Song Tree displays the parent/child lineage and supports selecting a version.
-- MyHub sections show locally created songs, branches, and favorites.
+- MyHub sections show locally created songs, branches, favorites, and votes.
 - Create allows adding a local song/branch and selecting a local audio file.
-- Profile and sign-in screens use temporary local preview state.
+- Profile name and HTTPS image URL persist locally; sign-in remains a local demo session.
 - Song, profile, vote, favorite, and branch changes are persisted on this Mac. Member mutations, credentials, SoundCloud metadata, and uploads are not sent to a server.
 - When a service URL is configured from About, Discover loads the server's paginated catalog and Song Tree refreshes the selected root through `/tree`. Locally created songs remain appended on this Mac. The native app still does not authenticate or send mutations to the legacy backend.
